@@ -1,0 +1,6 @@
+receiving labware location,receiving well location,dispensing labware location 1,dispensing well location 1,volume 1
+1,A1,11,A1,12
+1,A2,11,A1,100
+1,A3,11,A1,10
+1,A1,11,A2,22
+1,B1,11,A4,25
