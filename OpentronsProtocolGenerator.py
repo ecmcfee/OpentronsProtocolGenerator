@@ -135,7 +135,8 @@ def run(protocol: protocol_api.ProtocolContext):
             )
             content += (
                 f"    pipette.dispense({vol_chunk}, "
-                f"{labware_dict[recv_loc]}['{recv_well}'].top())\n"
+                f"{labware_dict[recv_loc]}['{recv_well}'].top(z=-3), push_out=2)\n"
+                f"    pipette.touch_tip({labware_dict[recv_loc]}['{recv_well}'], radius=0.8, v_offset=-1, speed=60)\n"
             )
     print(content)
     content += "    pipette.drop_tip()\n"
