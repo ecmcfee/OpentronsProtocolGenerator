@@ -4,6 +4,8 @@ import csv
 import datetime
 import math
 import pandas as pd
+import numpy as np
+import re
 
 
 
@@ -36,6 +38,22 @@ def parse_csv(file_path):
         messagebox.showerror("Error", f"Failed to parse CSV {file_path}: {e}")
         return None
 
+
+# Max liquid the P300 should ever hold at once (µL)
+MAX_P300_HOLD_UL = 200
+
+def chunk_volumes(total_ul: float, max_ul: float = MAX_P300_HOLD_UL):
+    """Split a total volume into chunks <= max_ul (both in µL)."""
+    total = float(total_ul)
+    if total <= 0:
+        return []
+    n_full = int(total // max_ul)
+    remainder = total - (n_full * max_ul)
+    chunks = [float(max_ul)] * n_full
+    if remainder > 0:
+        chunks.append(float(remainder))
+    return chunks
+
 def generate_protocol(stock_data, labware_data, operation_data, save_path):
     # Initialize that no tip has been used
     current_tip = None
@@ -43,7 +61,7 @@ def generate_protocol(stock_data, labware_data, operation_data, save_path):
     content = """from opentrons import protocol_api
 
 metadata = {
-    'apiLevel': '2.11',
+    'apiLevel': '2.15',
     'protocolName': 'Automatic Protocol',
     'author': 'Generated'
 }
@@ -51,7 +69,7 @@ metadata = {
 def run(protocol: protocol_api.ProtocolContext):
     # Load labware
 """
-
+    # labware_data = sort_with_heaters(labware_data)
     # Load labware based on labware_data
     labware_dict = {}
     module_locations = {}
@@ -61,14 +79,16 @@ def run(protocol: protocol_api.ProtocolContext):
         if 'tuberack' in labware['labware_title']:
             content += f"    {labware_variable} = protocol.load_labware('{labware['labware_title']}', {labware['location']})\n"
         if 'tiprack' in labware['labware_title']:
+            parts = labware['labware_title'].split("_")
+            volume = next((p for p in parts if "ul" in p.lower()), None)
+            labware_variable = f'tiprack_{volume}'
             content += f"    {labware_variable} = protocol.load_labware('{labware['labware_title']}', {labware['location']})\n"
         if 'heaterShakerModuleV1' in labware['labware_title']:
             content += f"    {labware_variable} = protocol.load_module('{labware['labware_title']}', '{labware['location']}')\n"
             module_locations[labware['location']] = {labware_variable}
-
         if 'plate' in labware['labware_title']:
-            if labware['location'] in module_locations:
-                content += f"    {labware_variable} = {module_locations[labware['location']]}.load_labware('{labware['labware_title']}')\n"
+            # if labware['location'] in module_locations:
+            content += f"    {labware_variable} = protocol.load_labware('{labware['labware_title']}', {labware['location']})\n"
 
 
 
@@ -76,39 +96,48 @@ def run(protocol: protocol_api.ProtocolContext):
 
     # Example: Load tiprack and pipette
     content += """
-    tiprack_200ul = protocol.load_labware('opentrons_96_filtertiprack_200ul', 10)
-    pipette = protocol.load_instrument('p300_single', 'right', tip_racks=[tiprack_200ul])
-    pipette.max_volume = 200  # Set max volume for p300 pipette adjustment
+    pipette = protocol.load_instrument('p300_single', 'left', tip_racks=[tiprack_200ul])
 """
 
 
     #csv_dir = r'C:\Users\mcfee\PycharmProjects\OpenTrons\misc\Gen4-2 Transfers.csv'
     #operation_data = pd.read_csv(csv_dir)
     #stock_data = pd.read_csv(r'C:\Users\mcfee\PycharmProjects\OpenTrons\misc\Gen4 Stocks.csv')
-    operation_data.sort_values(['dispensing well location 1','volume 1'])
+    operation_data.sort_values(['stock well location 1','volume 1'])
     current_pipette_res = None
 
     # operation_data.sort_values()
     for operation_row in operation_data.iterrows():
         operation = operation_row[1]
-        stock_loc = operation[f'dispensing labware location 1']
-        stock_well = operation['dispensing well location 1']
+        stock_loc = operation[f'stock labware location 1']
+        stock_well = operation['stock well location 1']
 
         recv_loc = operation['receiving labware location']
         recv_well = operation['receiving well location']
 
-        transfer_volume = operation['volume 1']
-        aspirate_height, stock_data = calc_aspirate_height(stock_data, stock_well,transfer_volume)
+        transfer_volume = float(operation['volume 1'])
 
-        receiving_labware = operation['receiving labware location']
-        receiving_well_location = operation['receiving well location']
-
-        if current_tip != stock_well:
+        # Tip policy: one tip per source well
+        if current_tip is None:
             current_tip = stock_well
             content += "    pipette.pick_up_tip()\n"
+        elif current_tip != stock_well:
+            current_tip = stock_well
+            content += "    pipette.drop_tip()\n"
+            content += "    pipette.pick_up_tip()\n"
 
-        content += f"    pipette.aspirate({transfer_volume}, {labware_dict[stock_loc]}.wells('{stock_well}').bottom(z={aspirate_height}))\n"
-        content += f"    pipette.dispense({transfer_volume}, {labware_dict[recv_loc]}.wells('{recv_well}'))\n"
+        # Split into <=200 µL chunks and update height/stock per chunk
+        for vol_chunk in chunk_volumes(transfer_volume, MAX_P300_HOLD_UL):
+            aspirate_height, stock_data = calc_aspirate_height(stock_data, stock_well, vol_chunk)
+            content += (
+                f"    pipette.aspirate({vol_chunk}, "
+                f"{labware_dict[stock_loc]}['{stock_well}'].bottom(z={aspirate_height}))\n"
+            )
+            content += (
+                f"    pipette.dispense({vol_chunk}, "
+                f"{labware_dict[recv_loc]}['{recv_well}'].top(z=-3), push_out=2)\n"
+                f"    pipette.touch_tip({labware_dict[recv_loc]}['{recv_well}'], radius=0.8, v_offset=-1, speed=60)\n"
+            )
     print(content)
     content += "    pipette.drop_tip()\n"
 
