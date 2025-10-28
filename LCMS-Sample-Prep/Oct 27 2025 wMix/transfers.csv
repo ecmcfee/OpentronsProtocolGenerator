@@ -1,0 +1,20 @@
+receiving labware location,receiving well location,stock labware location 1,stock well location 1,volume 1,priority,mix
+5,A2,7,A1,975,1,
+5,A3,7,A1,975,1,
+5,B1,7,A1,77.2,2,
+5,B2,7,A1,111.76,2,
+5,B3,7,A1,146.32,2,
+5,B4,7,A1,180.88,2,
+5,B5,7,A1,215.44,2,
+5,B1,7,A2,250,2,
+5,B2,7,A2,250,2,
+5,B3,7,A2,250,2,
+5,B4,7,A2,250,2,
+5,B5,7,A2,250,2,
+5,A2,5,A1,25,1,yes
+5,A3,5,A2,25,1,yes
+5,B1,5,A3,172.8,3,yes
+5,B2,5,A3,138.24,3,yes
+5,B3,5,A3,103.68,3,yes
+5,B4,5,A3,69.12,3,yes
+5,B5,5,A3,34.56,3,yes
