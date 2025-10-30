@@ -1,4 +1,3 @@
-
 import tkinter as tk
 from tkinter import filedialog, messagebox
 import math
@@ -6,7 +5,7 @@ import pandas as pd
 import re
 
 MAX_P300_HOLD_UL = 200   # hard cap for p300 holds/dispenses
-MAX_P1000_HOLD_UL = 900 # hard cap for p1000 holds/dispenses
+MAX_P1000_HOLD_UL = 900  # hard cap for p1000 holds/dispenses
 DEFAULT_MIX_REPS = 5
 DEFAULT_MIX_Z_MM = 2.0   # mix near bottom
 
@@ -42,9 +41,9 @@ def lookup_id(operation, labware_data):
     if labware_name == 'ecmcustom_15_tuberack_14780ul':
         ID = 1.83
     elif labware_name == 'avantorhplcvial_40_wellplate_1500ul':
-        ID = 0.496
-    elif labware_name == 'ecmcustom_40_wellplate_881.3ul':
         ID = 1.0
+    elif labware_name == 'ecmcustom_40_wellplate_881.3ul':
+        ID = 0.6
     else:
         ID = 3.0
     return ID
@@ -262,7 +261,7 @@ def generate_protocol(stock_data: pd.DataFrame, labware_data: pd.DataFrame, oper
     # P300 (left) prefers 200 µL tipracks; else fallback to any tiprack
     p300_tipracks = tiprack_200_vars if tiprack_200_vars else tiprack_any[:1]
     content.append("")
-    content.append(f"    p300 = protocol.load_instrument('p300_single', 'left', tip_racks=[{', '.join(p300_tipracks)}])")
+    content.append(f"    p300 = protocol.load_instrument('p300_single_gen2', 'left', tip_racks=[{', '.join(p300_tipracks)}])")
 
     # P1000 (right) only if 1000 µL tipracks are present
     p1000_loaded = len(tiprack_1000_vars) > 0
@@ -276,9 +275,9 @@ def generate_protocol(stock_data: pd.DataFrame, labware_data: pd.DataFrame, oper
     ops['receiving labware location'] = ops['receiving labware location'].astype(int)
 
     # ---- priority sort (optional) ----
-    ops = _apply_priority_sort(ops)
+    ops = _apply_priority_sort(ops).reset_index(drop=True)
 
-    # One-tip-per-source-well policy, tracked per pipette
+    # One-tip-per-source-well policy, tracked per pipette (overridden by mix logic)
     current_source = {'p300': None, 'p1000': None}
     picked = {'p300': False, 'p1000': False}
 
@@ -288,7 +287,21 @@ def generate_protocol(stock_data: pd.DataFrame, labware_data: pd.DataFrame, oper
             return 'p1000'
         return 'p300'
 
-    for _, op in ops.iterrows():
+    def _next_source_for_pipette(ops_df: pd.DataFrame, start_row_idx: int, pip_name: str):
+        """
+        Find the next operation (after start_row_idx) that uses 'pip_name',
+        and return its (slot, well) *source*. If none, return None.
+        """
+        for k in range(start_row_idx + 1, len(ops_df)):
+            nxt = ops_df.iloc[k]
+            pn = select_pipette(float(nxt['volume 1']))
+            if pn != pip_name:
+                continue
+            return (int(nxt['stock labware location 1']),
+                    str(nxt['stock well location 1']).strip())
+        return None
+
+    for row_idx, op in ops.iterrows():
         src_slot = int(op['stock labware location 1'])
         src_well = str(op['stock well location 1']).strip()
         dst_slot = int(op['receiving labware location'])
@@ -321,16 +334,49 @@ def generate_protocol(stock_data: pd.DataFrame, labware_data: pd.DataFrame, oper
             content.append(f"    {pip_var}.aspirate({chunk}, {labware_map[src_slot]}['{src_well}'].bottom(z={z}))")
             content.append(f"    {pip_var}.dispense({chunk}, {labware_map[dst_slot]}['{dst_well}'].top(z=-3))")
 
-            # Mix placement: after dispense, before touch_tip
-            if do_mix and (mix_each_chunk or i == len(chunks) - 1):
+            # Determine if we should mix now (per-chunk or only after the final chunk)
+            mix_now = do_mix and (mix_each_chunk or i == len(chunks) - 1)
+
+            if mix_now:
+                # Touch BEFORE mixing on the destination vessel
+                content.append(f"    {pip_var}.touch_tip({labware_map[dst_slot]}['{dst_well}'], radius=0.8, v_offset=-1, speed=60)")
                 content.append(f"    {pip_var}.mix({int(mix_reps)}, {round(float(mix_vol),2)}, {labware_map[dst_slot]}['{dst_well}'].bottom(z={DEFAULT_MIX_Z_MM}))")
 
-            content.append(f"    {pip_var}.touch_tip({labware_map[dst_slot]}['{dst_well}'], radius=0.8, v_offset=-1, speed=60)")
+                # --- NEW: conditional tip keep/drop after mix ---
+                keep_tip = False
+
+                if mix_each_chunk and i < len(chunks) - 1:
+                    # Next aspiration is the next chunk of THIS op (from src), which is NOT the just-mixed dest.
+                    keep_tip = False
+                else:
+                    # Final chunk (or only mixing at end). Look ahead to the next op that uses this pipette.
+                    next_src = _next_source_for_pipette(ops, row_idx, pip_name)
+                    keep_tip = (next_src is not None and next_src == (dst_slot, dst_well))
+
+                if keep_tip:
+                    # Keep the tip because the very next aspiration by this pipette is from the just-mixed solution.
+                    # Update current_source so the next op doesn't force a tip change.
+                    current_source[pip_name] = (dst_slot, dst_well)
+                    # Do NOT drop the tip here.
+                else:
+                    # Drop now; a different solution will be aspirated next time this pipette is used.
+                    content.append(f"    {pip_var}.drop_tip()")
+                    picked[pip_name] = False
+                    current_source[pip_name] = None
+
+                # If we dropped the tip due to mix_each_chunk and there are more chunks, pick up for the next chunk.
+                if mix_each_chunk and i < len(chunks) - 1:
+                    content.append(f"    {pip_var}.pick_up_tip()")
+                    picked[pip_name] = True
+                    current_source[pip_name] = src_key
+            else:
+                # No mix yet → still touch tip after dispense
+                content.append(f"    {pip_var}.touch_tip({labware_map[dst_slot]}['{dst_well}'], radius=0.8, v_offset=-1, speed=60)")
 
             # Track destination volume so it becomes a valid 'stock' for later steps
             stock_data = upsert_destination_stock(stock_data, dst_slot, dst_well, chunk)
 
-    # Drop any remaining picked tips
+    # Drop any remaining picked tips (only if not already dropped during mixing logic)
     if picked['p300']:
         content.append("    p300.drop_tip()")
     if p1000_loaded and picked['p1000']:
