@@ -339,8 +339,8 @@ def generate_protocol(stock_data: pd.DataFrame, labware_data: pd.DataFrame, oper
 
             if mix_now:
                 # Touch BEFORE mixing on the destination vessel
-                content.append(f"    {pip_var}.touch_tip({labware_map[dst_slot]}['{dst_well}'], radius=0.8, v_offset=-1, speed=60)")
                 content.append(f"    {pip_var}.mix({int(mix_reps)}, {round(float(mix_vol),2)}, {labware_map[dst_slot]}['{dst_well}'].bottom(z={DEFAULT_MIX_Z_MM}))")
+                content.append(f"    {pip_var}.touch_tip({labware_map[dst_slot]}['{dst_well}'], radius=0.8, v_offset=-1, speed=60)")
 
                 # --- NEW: conditional tip keep/drop after mix ---
                 keep_tip = False

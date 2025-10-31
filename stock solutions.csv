@@ -1,8 +1,0 @@
-stock name,volume(ul),labware location,well location
-A1,3000,11,A1
-A2,3000,11,A2
-A3,800,11,A3
-A4,400,11,A4
-B1,5000,11,B1
-DMF,6000,11,A3
-S3,250,11,A4

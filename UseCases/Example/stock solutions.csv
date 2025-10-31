@@ -1,4 +1,2 @@
 stock name,volume(ul),labware location,well location
-MeCN,5000,7,A1
-H2O,5000,7,A2
-ProdStockA,1000,5,A1
+H2O,5000,7,A1
