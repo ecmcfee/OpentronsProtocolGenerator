@@ -35,8 +35,6 @@ def run(protocol: protocol_api.ProtocolContext):
     p300.dispense(25.0, labware_5['A2'].top(z=-3))
     p300.touch_tip(labware_5['A2'], radius=0.8, v_offset=-1, speed=60)
     p300.mix(5, 25.0, labware_5['A2'].bottom(z=2.0))
-    p300.drop_tip()
-    p300.pick_up_tip()
     p300.aspirate(25.0, labware_5['A2'].bottom(z=7.4))
     p300.dispense(25.0, labware_5['A3'].top(z=-3))
     p300.touch_tip(labware_5['A3'], radius=0.8, v_offset=-1, speed=60)
